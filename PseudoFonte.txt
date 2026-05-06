@@ -1,0 +1,129 @@
+============================================
+// FIREGUARD - Pseudocódigo em Português BR
+// ============================================
+PROGRAMA FireGuardRobot;
+VAR
+  // Configurações
+  servidorRodando: BOOLEAN;
+  ipServidor: TEXTO := '192.168.2.80';
+  portaServidor: INTEIRO := 8080;
+  ultimaDeteccao: TEXTO;
+  scoreDeteccao: REAL;
+  
+  // Módulos do sistema
+  webcamIniciada: BOOLEAN;
+  capAtivo: BOOLEAN;
+  servidorHTTPAtivo: BOOLEAN;
+  modoAdhoc: BOOLEAN;
+PROCEDIMENTO IniciarSistema();
+  INICIO
+  ESCREVER('Iniciando FireGuard...');
+  
+  // 1. Iniciar captura de vídeo
+  ESCREVER('Iniciando captura RGB...');
+  webcamIniciada := VERDADEIRO;
+  capAtivo := VERDADEIRO;
+  
+  // 2. Iniciar servidor HTTP
+  ESCREVER('Iniciando servidor HTTP na porta ', portaServidor);
+  servidorHTTPAtivo := VERDADEIRO;
+  servidorRodando := VERDADEIRO;
+  
+  ESCREVER('FireGuard iniciado com sucesso!');
+FIM;
+FUNCAO GetFrameJPEG(): DADOS;
+  INICIO
+  // Busca frame atual da webcam
+  GetFrameJPEG := CapturarFrame();
+FIM;
+PROCEDIMENTO ProcessarDeteccao();
+  VAR
+    frameAtual: DADOS;
+    resultado: TEXTO;
+  INICIO
+  ESCREVER('Processando detecção...');
+  
+  // 1. Pegar frame da webcam
+  frameAtual := GetFrameJPEG();
+  
+  // 2.Enviar para modelo para detecção
+  resultado := Roda_Detector(frameAtual);
+  
+  // 3. Parser resultado JSON
+  ParseJSON(resultado, ultimaDeteccao, scoreDeteccao);
+  
+  ESCREVER('Classe: ', ultimaDeteccao, ' | Score: ', scoreDeteccao);
+FIM;
+// ============ ENDPOINTS HTTP ============
+PROCEDIMENTO Endpoint_FrameJPEG(requisição, resposta);
+  INICIO
+  resposta := GetFrameJPEG();
+  resposta.ContentType := 'image/jpeg';
+FIM;
+PROCEDIMENTO Endpoint_Detect(requisição, resposta);
+  INICIO
+  ProcessarDeteccao();
+  resposta := CriarJSON('class', ultimaDeteccao, 'score', scoreDeteccao);
+  resposta.ContentType := 'application/json';
+FIM;
+PROCEDIMENTO Endpoint_Status(requisição, resposta);
+  INICIO
+  resposta := 'OK';
+FIM;
+PROCEDIMENTO Endpoint_Reboot(requisição, resposta);
+  INICIO
+  ESCREVER('Reiniciando sistema...');
+  resposta := 'Rebooting...';
+  Sistema_Exec('reboot');
+FIM;
+PROCEDIMENTO Endpoint_Shutdown(requisição, resposta);
+  INICIO
+  ESCREVER('Desligando sistema...');
+  resposta := 'Shutting down...';
+  Sistema_Exec('poweroff');
+FIM;
+// ============ MODO ADHOC ============
+PROCEDIMENTO AtivarAdhoc();
+  INICIO
+  ESCREVER('Ativando modo adhoc...');
+  modoAdhoc := VERDADEIRO;
+  // Copia config adhoc
+  Arquivo_Copiar('/root/adhoc.conf', '/etc/wpa_supplicant/wpa_supplicant.conf');
+  // Configura IP estático
+  Arquivo_EscreverLinha('/etc/dhcpcd.conf', 'interface wlan0');
+  Arquivo_EscreverLinha('/etc/dhcpcd.conf', 'static ip_address=192.168.1.1/24');
+  // Reboot para aplicar
+  Sistema_Exec('systemctl reboot');
+FIM;
+// ============ LOOP PRINCIPAL ============
+PROCEDIMENTO LoopPrincipal();
+  INICIO
+  ENQUANTO servidorRodando FAÇA
+    // 1. Espera requisição HTTP
+    requisicao := HTTP_AguardarRequisicao();
+    
+    // 2. Roteia para endpoint correto
+    SE requisicao.caminho = '/frame.jpg' ENTÃO
+      Endpoint_FrameJPEG(requisicao, resposta);
+    SENAO SE requisicao.caminho = '/detect' ENTÃO
+      Endpoint_Detect(requisicao, resposta);
+    SENAO SE requisicao.caminho = '/status' ENTÃO
+      Endpoint_Status(requisicao, resposta);
+    SENAO SE requisicao.caminho = '/reboot' ENTÃO
+      Endpoint_Reboot(requisicao, resposta);
+    SENAO SE requisicao.caminho = '/shutdown' ENTÃO
+      Endpoint_Shutdown(requisicao, resposta);
+    SENAO SE requisicao.caminho = '/adhoc/on' ENTÃO
+      AtivarAdhoc();
+    FIM;
+    
+    // 3. Responde
+    HTTP_Responder(resposta);
+  FIM;
+FIM;
+// ============ INÍCIO DO PROGRAMA ============
+INICIO
+  IniciarSistema();
+  LoopPrincipal();
+FIM.
+
